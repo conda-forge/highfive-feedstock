@@ -7,18 +7,18 @@ package:
   version: {{ version }}
 
 source:
-  fn: HighFive-v{{ version }}.tar.gz
   url: https://github.com/BlueBrain/HighFive/archive/v{{ version }}.tar.gz
   sha256: {{ sha256 }}
 
 build:
-  number: 1
+  number: 2
   skip: True  # [win and vc<14]
 
 requirements:
   build:
     - {{ compiler('cxx') }}
     - cmake
+    - make  # [unix]
   host:
     - hdf5
     - boost
