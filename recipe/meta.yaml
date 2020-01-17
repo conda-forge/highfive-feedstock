@@ -10,16 +10,16 @@ source:
   url: https://github.com/BlueBrain/HighFive/archive/v{{ version }}.tar.gz
   sha256: {{ sha256 }}
   patches:
-    - pathes/0001-Make-ElementSet-work-in-N-dim-247.patch
-    - pathes/0002-Since-v2.0-CXX11-is-mandatory-by-CMake-246.patch
-    - pathes/0003-Missing-semicolon-254.patch
-    - pathes/0004-Add-support-for-array-of-type-Eigen-Matrix-258.patch
-    - pathes/0005-Do-not-free-const-char-266.patch
-    - pathes/0006-Remove-old-using-namespace-267.patch
-    - pathes/0007-Add-support-for-boost-multi_array-of-EigenMatrix-261.patch
-    - pathes/0008-Annotate_trait-add-deleteAttribute-function-239.patch
-    - pathes/0009-Clean-documentation-248.patch
-    - pathes/0010-Rework-dependencies-to-be-dynamic-i.e.-can-be-overri.patch
+    - patches/0001-Make-ElementSet-work-in-N-dim-247.patch
+    - patches/0002-Since-v2.0-CXX11-is-mandatory-by-CMake-246.patch
+    - patches/0003-Missing-semicolon-254.patch
+    - patches/0004-Add-support-for-array-of-type-Eigen-Matrix-258.patch
+    - patches/0005-Do-not-free-const-char-266.patch
+    - patches/0006-Remove-old-using-namespace-267.patch
+    - patches/0007-Add-support-for-boost-multi_array-of-EigenMatrix-261.patch
+    - patches/0008-Annotate_trait-add-deleteAttribute-function-239.patch
+    - patches/0009-Clean-documentation-248.patch
+    - patches/0010-Rework-dependencies-to-be-dynamic-i.e.-can-be-overri.patch
 
 build:
   number: 2
