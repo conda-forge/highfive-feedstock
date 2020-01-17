@@ -1,0 +1,194 @@
+From b661839c00fb570a1e1e20978c2ed2dbbbd72d5a Mon Sep 17 00:00:00 2001
+From: Nicolas Cornu <nicolas.cornu@epfl.ch>
+Date: Fri, 8 Nov 2019 21:23:32 +0100
+Subject: [PATCH 01/10] Make ElementSet work in N-dim (#247)
+
+* Make ElementSet work in N-dim
+---
+ include/highfive/bits/H5Slice_traits.hpp      | 33 ++++++++++++++---
+ include/highfive/bits/H5Slice_traits_misc.hpp | 27 +++++++++++---
+ tests/unit/tests_high_five_base.cpp           | 35 +++++++++++++++++++
+ 3 files changed, 86 insertions(+), 9 deletions(-)
+
+diff --git a/include/highfive/bits/H5Slice_traits.hpp b/include/highfive/bits/H5Slice_traits.hpp
+index 31852b7..0b534ba 100644
+--- a/include/highfive/bits/H5Slice_traits.hpp
++++ b/include/highfive/bits/H5Slice_traits.hpp
+@@ -23,7 +23,28 @@ class SliceTraits;
+ 
+ class ElementSet {
+   public:
++    ///
++    /// \brief Create a list of points of N-dimension for selection.
++    ///
++    /// \param list List of continuous coordinates (eg.: in 2 dimensions space `ElementSet{1, 2, 3 ,4}` create points
++    /// `(1, 2)` and `(3, 4)`).
++    explicit ElementSet(std::initializer_list<std::size_t> list);
++    ///
++    /// \brief Create a list of points of N-dimension for selection.
++    ///
++    /// \param list List of N-dim points.
++    explicit ElementSet(std::initializer_list<std::vector<std::size_t>> list);
++    ///
++    /// \brief Create a list of points of N-dimension for selection.
++    ///
++    /// \param element_ids List of continuous coordinates (eg.: in 2 dimensions space `ElementSet{1, 2, 3 ,4}` create points
++    /// `(1, 2)` and `(3, 4)`).
+     explicit ElementSet(const std::vector<std::size_t>& element_ids);
++    ///
++    /// \brief Create a list of points of N-dimension for selection.
++    ///
++    /// \param element_ids List of N-dim points.
++    explicit ElementSet(const std::vector<std::vector<std::size_t>>& element_ids);
+ 
+   private:
+     std::vector<std::size_t> _ids;
+@@ -36,9 +57,10 @@ template <typename Derivate>
+ class SliceTraits {
+   public:
+     ///
+-    /// select a region in the current Slice/Dataset of 'count' points at
+-    /// 'offset' separated by 'stride'. If strides are not provided they will
++    /// \brief Select a region in the current Slice/Dataset of \p count points at
++    /// \p offset separated by \p stride. If strides are not provided they will
+     /// default to 1 in all dimensions.
++    ///
+     /// vector offset and count have to be from the same dimension
+     ///
+     Selection select(const std::vector<size_t>& offset,
+@@ -47,20 +69,21 @@ class SliceTraits {
+         const;
+ 
+     ///
+-    /// select a set of columns in the last dimension of this dataset.
++    /// \brief Select a set of columns in the last dimension of this dataset.
++    ///
+     /// The column indices must be smaller than the dimension size.
+     ///
+     Selection select(const std::vector<size_t>& columns) const;
+ 
+     ///
+-    /// select a region in the current Slice/Dataset out of a list of elements
++    /// \brief Select a region in the current Slice/Dataset out of a list of elements.
+     ///
+     Selection select(const ElementSet& elements) const;
+ 
+     ///
+     /// Read the entire dataset into a buffer
+     /// An exception is raised is if the numbers of dimension of the buffer and
+-    /// of the dataset are different
++    /// of the dataset are different.
+     ///
+     /// The array type can be a N-pointer or a N-vector. For plain pointers
+     /// not dimensionality checking will be performed, it is the user's
+diff --git a/include/highfive/bits/H5Slice_traits_misc.hpp b/include/highfive/bits/H5Slice_traits_misc.hpp
+index be9eeae..b6bd20f 100644
+--- a/include/highfive/bits/H5Slice_traits_misc.hpp
++++ b/include/highfive/bits/H5Slice_traits_misc.hpp
+@@ -54,9 +54,22 @@ inline hid_t get_memspace_id(const DataSet* ptr) {
+ }
+ }
+ 
++inline ElementSet::ElementSet(std::initializer_list<std::size_t> list)
++    : _ids(list) {}
++
++inline ElementSet::ElementSet(std::initializer_list<std::vector<std::size_t>> list)
++    : ElementSet(std::vector<std::vector<std::size_t>>(list)) {}
++
++
+ inline ElementSet::ElementSet(const std::vector<std::size_t>& element_ids)
+     : _ids(element_ids) {}
+ 
++inline ElementSet::ElementSet(const std::vector<std::vector<std::size_t>>& element_ids) {
++    for (const auto& vec: element_ids) {
++        std::copy(vec.begin(), vec.end(), std::back_inserter(_ids));
++    }
++}
++
+ template <typename Derivate>
+ inline Selection
+ SliceTraits<Derivate>::select(const std::vector<size_t>& offset,
+@@ -116,7 +129,14 @@ template <typename Derivate>
+ inline Selection
+ SliceTraits<Derivate>::select(const ElementSet& elements) const {
+     const hsize_t* data = NULL;
++    DataSpace space = static_cast<const Derivate*>(this)->getSpace().clone();
+     const std::size_t length = elements._ids.size();
++    if (length % space.getNumberDimensions() != 0) {
++        throw DataSpaceException("Number of coordinates in elements picking "
++                "should be a multiple of the dimensions.");
++    }
++
++    const std::size_t num_elements = length / space.getNumberDimensions();
+     std::vector<hsize_t> raw_elements;
+ 
+     // optimised at compile time
+@@ -128,16 +148,15 @@ SliceTraits<Derivate>::select(const ElementSet& elements) const {
+         raw_elements.resize(length);
+         std::copy(elements._ids.begin(), elements._ids.end(),
+                   raw_elements.begin());
+-        data = &(raw_elements[0]);
++        data = raw_elements.data();
+     }
+ 
+-    DataSpace space = static_cast<const Derivate*>(this)->getSpace().clone();
+-    if (H5Sselect_elements(space.getId(), H5S_SELECT_SET, length, data) < 0) {
++    if (H5Sselect_elements(space.getId(), H5S_SELECT_SET, num_elements, data) < 0) {
+         HDF5ErrMapper::ToException<DataSpaceException>(
+             "Unable to select elements");
+     }
+ 
+-    return Selection(DataSpace(length), space,
++    return Selection(DataSpace(num_elements), space,
+                      details::get_dataset(static_cast<const Derivate*>(this)));
+ }
+ 
+diff --git a/tests/unit/tests_high_five_base.cpp b/tests/unit/tests_high_five_base.cpp
+index 5692d02..f6b7f22 100644
+--- a/tests/unit/tests_high_five_base.cpp
++++ b/tests/unit/tests_high_five_base.cpp
+@@ -810,6 +810,41 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(selectionArraySimple, T, dataset_test_types) {
+     selectionArraySimpleTest<T>();
+ }
+ 
++BOOST_AUTO_TEST_CASE(selectionByElementMultiDim) {
++    const std::string FILE_NAME("h5_test_selection_multi_dim.h5");
++    // Create a 2-dim dataset
++    File file(FILE_NAME, File::ReadWrite | File::Create | File::Truncate);
++    std::vector<size_t> dims{3,3};
++
++    auto set = file.createDataSet("test", DataSpace(dims), AtomicType<int>());
++    int values[3][3] = {{1,2,3},{4,5,6},{7,8,9}};
++    set.write(values);
++
++    {
++        int value;
++        set.select(ElementSet{{1,1}}).read(value);
++        BOOST_CHECK_EQUAL(value, 5);
++    }
++
++    {
++        int value[2];
++        set.select(ElementSet{0,0,2,2}).read(value);
++        BOOST_CHECK_EQUAL(value[0], 1);
++        BOOST_CHECK_EQUAL(value[1], 9);
++    }
++
++    {
++        int value[2];
++        set.select(ElementSet{{0,1},{1,2}}).read(value);
++        BOOST_CHECK_EQUAL(value[0], 2);
++        BOOST_CHECK_EQUAL(value[1], 6);
++    }
++
++    {
++        BOOST_CHECK_THROW(set.select(ElementSet{0, 1, 2}), DataSpaceException);
++    }
++}
++
+ template <typename T>
+ void columnSelectionTest() {
+     std::ostringstream filename;
+-- 
+2.21.0 (Apple Git-122.2)
+

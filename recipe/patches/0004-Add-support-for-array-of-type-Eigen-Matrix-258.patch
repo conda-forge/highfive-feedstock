@@ -1,0 +1,426 @@
+From 41b0390d6102184b1b6617cefb3fe89ef9cbe07d Mon Sep 17 00:00:00 2001
+From: Nicolas Cornu <nicolas.cornu@epfl.ch>
+Date: Tue, 17 Dec 2019 17:11:16 +0100
+Subject: [PATCH 04/10] Add support for array of type Eigen::Matrix (#258)
+
+* Add support for Eigen::Matrix and std::vector of Eigen::Matrix
+---
+ include/highfive/H5DataSpace.hpp           |   8 ++
+ include/highfive/bits/H5Converter_misc.hpp | 126 +++++++++++++++++++++
+ include/highfive/bits/H5Dataspace_misc.hpp |  25 +++-
+ include/highfive/bits/H5Utils.hpp          |  31 ++++-
+ tests/unit/tests_high_five_base.cpp        |  92 +++++++++++++++
+ tests/unit/tests_high_five_easy.cpp        |   6 -
+ 6 files changed, 277 insertions(+), 11 deletions(-)
+
+diff --git a/include/highfive/H5DataSpace.hpp b/include/highfive/H5DataSpace.hpp
+index 8922726..ba8482d 100644
+--- a/include/highfive/H5DataSpace.hpp
++++ b/include/highfive/H5DataSpace.hpp
+@@ -131,6 +131,14 @@ class DataSpace : public Object {
+     static DataSpace From(const boost::numeric::ublas::matrix<Value>& mat);
+ #endif
+ 
++#ifdef H5_USE_EIGEN
++    template <typename Value, int M, int N>
++    static DataSpace From(const Eigen::Matrix<Value, M, N>& mat);
++
++    template <typename Value, int M, int N>
++    static DataSpace From(const std::vector<Eigen::Matrix<Value, M, N>>& vec);
++#endif
++
+   protected:
+     explicit DataSpace();
+ 
+diff --git a/include/highfive/bits/H5Converter_misc.hpp b/include/highfive/bits/H5Converter_misc.hpp
+index dba2138..17d744d 100644
+--- a/include/highfive/bits/H5Converter_misc.hpp
++++ b/include/highfive/bits/H5Converter_misc.hpp
+@@ -264,6 +264,132 @@ struct data_converter<boost::numeric::ublas::matrix<T>, void> {
+ 
+     std::vector<size_t> _dims;
+ };
++#endif
++
++#ifdef H5_USE_EIGEN
++//compute size for single Eigen Matrix
++template <typename T, int M, int N>
++inline size_t compute_total_size(const Eigen::Matrix<T,M,N>& matrix)
++{
++    return matrix.rows() * matrix.cols();
++}
++
++//compute size for  std::vector of Eigens
++template <typename T, int M, int N>
++inline size_t compute_total_size(const std::vector<Eigen::Matrix<T,M,N>>& vec)
++{
++    return std::accumulate(vec.begin(), vec.end(), size_t{0u}, [](size_t so_far, const auto& v) {
++        return so_far + static_cast<size_t>(v.rows()) * static_cast<size_t>(v.cols());
++    });
++}
++
++//compute total row size for std::vector of Eigens
++template <typename T, int M, int N>
++inline size_t compute_total_row_size(const std::vector<Eigen::Matrix<T,M,N>>& vec)
++{
++    return std::accumulate(vec.begin(), vec.end(), size_t{0u}, [](size_t so_far, const auto& v) {
++        return so_far + static_cast<size_t>(v.rows());
++    });
++}
++
++
++// apply conversion to eigen matrix
++template <typename T, int M, int N>
++struct data_converter<Eigen::Matrix<T, M, N>, void> {
++
++    typedef typename Eigen::Matrix<T, M, N> MatrixTMN;
++
++    inline data_converter(MatrixTMN&, DataSpace& space)
++        : _dims(space.getDimensions()) {
++        assert(_dims.size() == 2);
++    }
++
++    inline typename type_of_array<T>::type* transform_read(MatrixTMN& array) {
++        if (_dims[0] != static_cast<size_t>(array.rows()) ||
++            _dims[1] != static_cast<size_t>(array.cols())) {
++            array.resize(static_cast<Eigen::Index>(_dims[0]), static_cast<Eigen::Index>(_dims[1]));
++        }
++        return array.data();
++    }
++
++    inline typename type_of_array<T>::type* transform_write(MatrixTMN& array) {
++        return array.data();
++    }
++
++    inline void process_result(MatrixTMN&) {}
++
++    std::vector<size_t> _dims;
++};
++
++template <typename T, int M, int N>
++inline void vectors_to_single_buffer(const std::vector<Eigen::Matrix<T,M,N>>& vec,
++                                     const std::vector<size_t>& dims,
++                                     const size_t current_dim,
++                                     std::vector<T>& buffer) {
++
++    check_dimensions_vector(compute_total_row_size(vec), dims[current_dim], current_dim);
++    for (const auto& k : vec) {
++        std::copy(k.data(), k.data()+k.size(), std::back_inserter(buffer));
++    }
++}
++
++// apply conversion to std::vector of eigen matrix
++template <typename T, int M, int N>
++struct data_converter<std::vector<Eigen::Matrix<T,M,N>>, void> {
++
++    typedef typename Eigen::Matrix<T, M, N> MatrixTMN;
++
++    inline data_converter(const std::vector<MatrixTMN>& , DataSpace& space)
++        : _dims(space.getDimensions()), _space(space) {
++        assert(_dims.size() == 2);
++    }
++
++    inline typename type_of_array<T>::type*
++    transform_read(std::vector<MatrixTMN>& /* vec */) {
++        _vec_align.resize(compute_total_size(_space.getDimensions()));
++        return _vec_align.data();
++    }
++
++    inline typename type_of_array<T>::type*
++    transform_write(std::vector<MatrixTMN>& vec) {
++        _vec_align.reserve(compute_total_size(vec));
++        vectors_to_single_buffer<T, M, N>(vec, _dims, 0, _vec_align);
++        return _vec_align.data();
++    }
++
++    inline void process_result(std::vector<MatrixTMN>& vec) {
++        T* start = _vec_align.data();
++        if(vec.size() > 0) {
++            for(auto& v : vec){
++                v = Eigen::Map<MatrixTMN>(start, v.rows(), v.cols());
++                start += v.rows()*v.cols();
++            }
++        }
++        else {
++            if(M == -1 || N == -1) {
++                std::ostringstream ss;
++                ss << "Dynamic size(-1) used without pre-defined vector data layout.\n"
++                   << "Initiliaze vector elements using Zero, i.e.:\n"
++                   << "\t vector<MatrixXd> vec(5, MatrixXd::Zero(20,5))";
++                throw DataSetException(ss.str());
++            }
++            else
++            {
++                for (size_t i = 0; i < _dims[0] / static_cast<size_t>(M); ++i) {
++                    vec.emplace_back(Eigen::Map<MatrixTMN>(start, M, N));
++                    start += M * N;
++                }
++            }
++        }
++    }
++
++    std::vector<size_t> _dims;
++    std::vector<typename type_of_array<T>::type> _vec_align;
++    DataSpace& _space;
++};
++
++
++
+ #endif
+ 
+ // apply conversion for vectors nested vectors
+diff --git a/include/highfive/bits/H5Dataspace_misc.hpp b/include/highfive/bits/H5Dataspace_misc.hpp
+index a91c43f..64508f6 100644
+--- a/include/highfive/bits/H5Dataspace_misc.hpp
++++ b/include/highfive/bits/H5Dataspace_misc.hpp
+@@ -146,7 +146,8 @@ inline DataSpace DataSpace::From(const ScalarValue& scalar) {
+         "boost::numeric::ublas::matrix<all_basic_types> | "
+         "boost::multi_array<all_basic_types> \n"
+         "  all_supported_types = all_basic_types | stl_container_types | "
+-        "boost_container_types");
++        "boost_container_types"
++        "  eigen_matrix_type = Eigen::Matrix<signed_arithmetic_type> | Eigen::VectorXX");
+     return DataSpace(DataSpace::datascape_scalar);
+ }
+ 
+@@ -182,6 +183,28 @@ DataSpace::From(const boost::numeric::ublas::matrix<Value>& mat) {
+     dims[1] = mat.size2();
+     return DataSpace(dims);
+ }
++#endif
++
++#ifdef H5_USE_EIGEN
++template <typename Value, int M, int N>
++inline DataSpace
++DataSpace::From(const Eigen::Matrix<Value, M, N>&  mat ) {
++    std::vector<size_t> dims{static_cast<size_t>(mat.rows()), static_cast<size_t>(mat.cols())};
++    return DataSpace(dims);
++}
++
++template <typename Value, int M, int N>
++inline DataSpace
++DataSpace::From(const std::vector<Eigen::Matrix<Value, M, N>>& vec) {
++    std::vector<size_t> dims{std::accumulate(vec.begin(),
++                                             vec.end(),
++                                             size_t{0u},
++                                             [](size_t so_far, const auto& v) {
++                                                 return so_far + static_cast<size_t>(v.rows());
++                                             }),
++                             static_cast<size_t>(vec[0].cols())};
++    return DataSpace(dims);
++}
+ 
+ #endif
+ 
+diff --git a/include/highfive/bits/H5Utils.hpp b/include/highfive/bits/H5Utils.hpp
+index a45d72c..7d379c7 100644
+--- a/include/highfive/bits/H5Utils.hpp
++++ b/include/highfive/bits/H5Utils.hpp
+@@ -24,6 +24,10 @@
+ #include <boost/numeric/ublas/matrix.hpp>
+ #endif
+ 
++#ifdef H5_USE_EIGEN
++#include <Eigen/Eigen>
++#endif
++
+ #include <H5public.h>
+ 
+ namespace HighFive {
+@@ -69,6 +73,18 @@ struct array_dims<boost::numeric::ublas::matrix<T> > {
+ };
+ #endif
+ 
++#ifdef H5_USE_EIGEN
++template<typename T, int M, int N>
++struct array_dims<Eigen::Matrix<T, M, N>> {
++    static constexpr size_t value = 2;
++};
++
++template<typename T, int M, int N>
++struct array_dims<std::vector<Eigen::Matrix<T, M, N>>> {
++    static constexpr size_t value = 2;
++};
++#endif
++
+ // determine recursively the size of each dimension of a N dimension vector
+ template <typename T>
+ void get_dim_vector_rec(const T& vec, std::vector<size_t>& dims) {
+@@ -96,27 +112,34 @@ struct type_of_array {
+ };
+ 
+ template <typename T>
+-struct type_of_array<std::vector<T> > {
++struct type_of_array<std::vector<T>> {
+     typedef typename type_of_array<T>::type type;
+ };
+ 
+ template <typename T, std::size_t N>
+-struct type_of_array<std::array<T, N> > {
++struct type_of_array<std::array<T, N>> {
+     typedef typename type_of_array<T>::type type;
+ };
+ 
+ #ifdef H5_USE_BOOST
+ template <typename T, std::size_t Dims>
+-struct type_of_array<boost::multi_array<T, Dims> > {
++struct type_of_array<boost::multi_array<T, Dims>> {
+     typedef typename type_of_array<T>::type type;
+ };
+ 
+ template <typename T>
+-struct type_of_array<boost::numeric::ublas::matrix<T> > {
++struct type_of_array<boost::numeric::ublas::matrix<T>> {
+     typedef typename type_of_array<T>::type type;
+ };
+ #endif
+ 
++#ifdef H5_USE_EIGEN
++template<typename T, int M, int N>
++struct type_of_array<Eigen::Matrix<T, M, N>> {
++    typedef T type;
++};
++#endif
++
+ template <typename T>
+ struct type_of_array<T*> {
+     typedef typename type_of_array<T>::type type;
+diff --git a/tests/unit/tests_high_five_base.cpp b/tests/unit/tests_high_five_base.cpp
+index f6b7f22..5293df7 100644
+--- a/tests/unit/tests_high_five_base.cpp
++++ b/tests/unit/tests_high_five_base.cpp
+@@ -1140,5 +1140,97 @@ BOOST_AUTO_TEST_CASE(HighFiveInspect) {
+     // meta
+     BOOST_CHECK(ds.getType() == ObjectType::Dataset);  // internal
+     BOOST_CHECK(ds.getInfo().getRefCount() == 1);
++}
++
++#ifdef H5_USE_EIGEN
++BOOST_AUTO_TEST_CASE(HighFiveEigen) {
++    const std::string FILE_NAME("test_eigen.h5");
++    const std::string DS_NAME = "ds";
++
++    // Create a new file using the default property lists.
++    File file(FILE_NAME, File::ReadWrite | File::Create | File::Truncate);
++
++    auto test = [&DS_NAME, &file](const std::string& test_flavor, const auto& vec_input, auto& vec_output){
++        file.createDataSet(DS_NAME + test_flavor, vec_input).write(vec_input);
++        file.getDataSet(DS_NAME + test_flavor).read(vec_output);
++    };
++
++    std::string DS_NAME_FLAVOR;
++
++
++    // std::vector<of vector <of POD>>
++    {
++        DS_NAME_FLAVOR = "VectorOfVectorOfPOD";
++        std::vector<std::vector<float>> vec_in{{5.0f, 6.0f, 7.0f}, {5.1f, 6.1f, 7.1f}, {5.2f, 6.2f, 7.2f} };
++        std::vector<std::vector<float>> vec_out;
++
++        test(DS_NAME_FLAVOR, vec_in, vec_out);
++    }
++
++    //std::vector<Eigen::Vector3d>
++    {
++        DS_NAME_FLAVOR = "VectorOfEigenVector3d";
++        std::vector<Eigen::Vector3d> vec_in{{5.0, 6.0, 7.0},{7.0, 8.0, 9.0}};
++        std::vector<Eigen::Vector3d> vec_out;
++        test(DS_NAME_FLAVOR, vec_in, vec_out);
++    }
++
++    // Eigen Vector2d
++    {
++        DS_NAME_FLAVOR = "EigenVector2d";
++        Eigen::Vector2d vec_in{5.0, 6.0};
++        Eigen::Vector2d vec_out;
++
++        test(DS_NAME_FLAVOR, vec_in, vec_out);
++    }
++
++    // Eigen Matrix
++    {
++        DS_NAME_FLAVOR = "EigenMatrix";
++        Eigen::Matrix<double, 3,3> vec_in; vec_in << 1,2,3,4,5,6,7,8,9;
++        Eigen::Matrix<double, 3,3> vec_out;
++
++        test(DS_NAME_FLAVOR, vec_in, vec_out);
++    }
++
++    // Eigen MatrixXd
++    {
++        DS_NAME_FLAVOR = "EigenMatrixXd";
++        Eigen::MatrixXd vec_in = 100. * Eigen::MatrixXd::Random(20, 5);
++        Eigen::MatrixXd vec_out(20,5);
++
++        test(DS_NAME_FLAVOR, vec_in, vec_out);
++    }
++
++    // std::vector<of EigenMatrixXd>
++    {
++        DS_NAME_FLAVOR = "VectorEigenMatrixXd";
++
++        Eigen::MatrixXd m1 = 100. * Eigen::MatrixXd::Random(20, 5);
++        Eigen::MatrixXd m2 = 100. * Eigen::MatrixXd::Random(20, 5);
++        std::vector<Eigen::MatrixXd> vec_in;
++        vec_in.push_back(m1);
++        vec_in.push_back(m2);
++        std::vector<Eigen::MatrixXd> vec_out(2, Eigen::MatrixXd::Zero(20,5));
++
++        test(DS_NAME_FLAVOR, vec_in, vec_out);
++    }
++
++    // std::vector<of EigenMatrixXd> - exception
++    {
++        DS_NAME_FLAVOR = "VectorEigenMatrixXdExc";
++
++        Eigen::MatrixXd m1 = 100. * Eigen::MatrixXd::Random(20, 5);
++        Eigen::MatrixXd m2 = 100. * Eigen::MatrixXd::Random(20, 5);
++        std::vector<Eigen::MatrixXd> vec_in;
++        vec_in.push_back(m1);
++        vec_in.push_back(m2);
++        file.createDataSet(DS_NAME + DS_NAME_FLAVOR, vec_in).write(vec_in);
++
++        std::vector<Eigen::MatrixXd> vec_out_exception;
++        BOOST_CHECK_THROW(file.getDataSet(DS_NAME + DS_NAME_FLAVOR).read(vec_out_exception), HighFive::DataSetException);
++    }
++
+ 
+ }
++#endif
+diff --git a/tests/unit/tests_high_five_easy.cpp b/tests/unit/tests_high_five_easy.cpp
+index e55984d..2e5af55 100644
+--- a/tests/unit/tests_high_five_easy.cpp
++++ b/tests/unit/tests_high_five_easy.cpp
+@@ -212,9 +212,7 @@ BOOST_AUTO_TEST_CASE(H5Easy_Eigen_MatrixX)
+     BOOST_CHECK_EQUAL(A.isApprox(A_r), true);
+     BOOST_CHECK_EQUAL(B.isApprox(B_r), true);
+ }
+-#endif
+ 
+-#ifdef H5_USE_EIGEN
+ BOOST_AUTO_TEST_CASE(H5Easy_Eigen_VectorX)
+ {
+     H5Easy::File file("test.h5", H5Easy::File::Overwrite);
+@@ -231,9 +229,7 @@ BOOST_AUTO_TEST_CASE(H5Easy_Eigen_VectorX)
+     BOOST_CHECK_EQUAL(A.isApprox(A_r), true);
+     BOOST_CHECK_EQUAL(B.isApprox(B_r), true);
+ }
+-#endif
+ 
+-#ifdef H5_USE_EIGEN
+ BOOST_AUTO_TEST_CASE(H5Easy_Eigen_MatrixXRowMajor)
+ {
+     typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> MatrixXd;
+@@ -253,9 +249,7 @@ BOOST_AUTO_TEST_CASE(H5Easy_Eigen_MatrixXRowMajor)
+     BOOST_CHECK_EQUAL(A.isApprox(A_r), true);
+     BOOST_CHECK_EQUAL(B.isApprox(B_r), true);
+ }
+-#endif
+ 
+-#ifdef H5_USE_EIGEN
+ BOOST_AUTO_TEST_CASE(H5Easy_Eigen_VectorXRowMajor)
+ {
+     typedef Eigen::Matrix<double, 1, Eigen::Dynamic, Eigen::RowMajor> VectorXd;
+-- 
+2.21.0 (Apple Git-122.2)
+

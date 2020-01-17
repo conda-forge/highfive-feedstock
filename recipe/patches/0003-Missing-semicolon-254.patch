@@ -1,0 +1,44 @@
+From 3734abd58085fa22047d0a4140d10efa655928ca Mon Sep 17 00:00:00 2001
+From: marianheil <48517413+marianheil@users.noreply.github.com>
+Date: Thu, 12 Dec 2019 08:58:22 +0100
+Subject: [PATCH 03/10] Missing semicolon (#254)
+
+---
+ tests/unit/tests_high_five.hpp          | 7 +++++++
+ tests/unit/tests_high_five_parallel.cpp | 2 +-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/tests/unit/tests_high_five.hpp b/tests/unit/tests_high_five.hpp
+index a09404b..c31b4b3 100644
+--- a/tests/unit/tests_high_five.hpp
++++ b/tests/unit/tests_high_five.hpp
+@@ -13,6 +13,13 @@
+ #include <vector>
+ #include <boost/mpl/list.hpp>
+ 
++// Since, 1.59: semicolon has been removed from the end of the BOOST_GLOBAL_FIXTURE
++// https://github.com/boostorg/test/commit/3f7216db3db2e11a768d8d0c8bb18632f106c466
++#if BOOST_VERSION >= 105900
++#define BOOST_GLOBAL_FIXTURE_END ;
++#else
++#define BOOST_GLOBAL_FIXTURE_END
++#endif
+ 
+ using complex = std::complex<double>;
+ 
+diff --git a/tests/unit/tests_high_five_parallel.cpp b/tests/unit/tests_high_five_parallel.cpp
+index c2fdd55..cf2da22 100644
+--- a/tests/unit/tests_high_five_parallel.cpp
++++ b/tests/unit/tests_high_five_parallel.cpp
+@@ -35,7 +35,7 @@ struct MpiFixture {
+ };
+ 
+ BOOST_GLOBAL_FIXTURE(MpiFixture)
+-
++BOOST_GLOBAL_FIXTURE_END
+ 
+ template <typename T>
+ void selectionArraySimpleTestParallel() {
+-- 
+2.21.0 (Apple Git-122.2)
+

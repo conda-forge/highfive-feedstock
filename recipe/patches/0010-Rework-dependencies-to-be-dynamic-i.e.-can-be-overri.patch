@@ -1,0 +1,556 @@
+From 2f07be8153b1ad84cee9279958c98c8c67180c10 Mon Sep 17 00:00:00 2001
+From: Fernando Pereira <ferdonline@gmail.com>
+Date: Tue, 14 Jan 2020 00:18:18 +0100
+Subject: [PATCH 10/10] Rework dependencies to be dynamic, i.e. can be
+ overridden when using from install (#255)
+
+We now create an INTERFACE target to hold dependencies info
+This target is created on every configure, from HighFive itself or any
+using project, trigerred from HighFiveConfig.cmake
+
+* WINDOWS: Dont auto-link
+* Activate c++11 if not specified
+* Added depend deploy mode. Prefix USE_x w HIGHFIVE_
+* HIGHFIVE_USE_INSTALL_DEPS as an option with default
+---
+ .travis.yml                              | 16 ++---
+ CMake/HighFiveConfig.cmake.in            | 22 +++++++
+ CMake/HighFiveTargetDeps.cmake           | 67 +++++++++++++++++++++
+ CMake/HighFiveTargetExport.cmake         | 48 +++++++++++++++
+ CMake/PackageConfig.cmake                | 57 ------------------
+ CMake/config/CompilerFlagsHelpers.cmake  | 12 ++--
+ CMake/config/ReleaseDebugAutoFlags.cmake |  9 ++-
+ CMakeLists.txt                           | 74 ++++++++++++++----------
+ README.md                                | 14 ++---
+ src/examples/CMakeLists.txt              |  2 +-
+ tests/unit/CMakeLists.txt                |  8 +--
+ 11 files changed, 210 insertions(+), 119 deletions(-)
+ create mode 100644 CMake/HighFiveTargetDeps.cmake
+ create mode 100644 CMake/HighFiveTargetExport.cmake
+ delete mode 100644 CMake/PackageConfig.cmake
+
+diff --git a/.travis.yml b/.travis.yml
+index 0594485..d2f1cb6 100644
+--- a/.travis.yml
++++ b/.travis.yml
+@@ -49,7 +49,7 @@ matrix:
+     - os: linux
+       dist: trusty
+       env:
+-        - USE_XTENSOR=False
++        - HIGHFIVE_USE_XTENSOR=False
+         - HIGHFIVE_PARALLEL_HDF5=False
+       addons:
+         apt:
+@@ -65,7 +65,7 @@ matrix:
+       dist: xenial
+       env:
+         - GCC_VERSION=7
+-        - USE_XTENSOR=True
++        - HIGHFIVE_USE_XTENSOR=True
+         - HIGHFIVE_PARALLEL_HDF5=True
+       addons: *gcc7
+ 
+@@ -84,7 +84,7 @@ matrix:
+       dist: xenial
+       env:
+         - CLANG_VERSION=7
+-        - USE_XTENSOR=True
++        - HIGHFIVE_USE_XTENSOR=True
+         - HIGHFIVE_PARALLEL_HDF5=True
+       addons: *clang7
+ 
+@@ -92,13 +92,13 @@ matrix:
+     - os: osx
+       osx_image: xcode10.3
+       env:
+-        - USE_XTENSOR=True
++        - HIGHFIVE_USE_XTENSOR=True
+         - HIGHFIVE_PARALLEL_HDF5=False
+ 
+     # Windows
+     - os: windows
+       env:
+-        - USE_XTENSOR=True
++        - HIGHFIVE_USE_XTENSOR=True
+         - HIGHFIVE_PARALLEL_HDF5=False
+ 
+ env:
+@@ -132,7 +132,7 @@ install:
+   - conda update -q conda
+   - conda install -c conda-forge xtl xsimd xtensor
+   - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then
+-      conda install -c conda-forge boost hdf5 eigen;
++      conda install -c conda-forge boost-cpp hdf5 eigen;
+     fi
+ 
+ before_script:
+@@ -152,8 +152,8 @@ script:
+     -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+     -DHIGHFIVE_TEST_SINGLE_INCLUDES:BOOL=ON
+     -DHIGHFIVE_PARALLEL_HDF5:BOOL=${HIGHFIVE_PARALLEL_HDF5}
+-    -DUSE_EIGEN:BOOL=ON
+-    -DUSE_XTENSOR:BOOL=${USE_XTENSOR}
++    -DHIGHFIVE_USE_EIGEN:BOOL=ON
++    -DHIGHFIVE_USE_XTENSOR:BOOL=${HIGHFIVE_USE_XTENSOR}
+     -G "${CMAKE_GENERATOR}" ../
+   - cmake --build .
+   - CTEST_OUTPUT_ON_FAILURE=1 cmake --build . --target ${TESTS_TARGET}
+diff --git a/CMake/HighFiveConfig.cmake.in b/CMake/HighFiveConfig.cmake.in
+index b63118c..e23125d 100644
+--- a/CMake/HighFiveConfig.cmake.in
++++ b/CMake/HighFiveConfig.cmake.in
+@@ -1,3 +1,25 @@
++
++# Get HighFive targets
+ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/HighFiveTargets.cmake")
+   include("${CMAKE_CURRENT_LIST_DIR}/HighFiveTargets.cmake")
+ endif()
++
++# If the user sets this flag, all dependencies are preserved.
++# Useful in central deployments where dependencies are not prepared later
++option(HIGHFIVE_USE_INSTALL_DEPS "Use original Highfive dependencies" @HIGHFIVE_USE_INSTALL_DEPS@)
++if(HIGHFIVE_USE_INSTALL_DEPS)
++  return()
++endif()
++
++# Options when used from external projects. Keep defaults
++if(NOT DEFINED HIGHFIVE_PARALLEL_HDF5)
++  option(HIGHFIVE_PARALLEL_HDF5 "Enable Parallel HDF5 support" @HIGHFIVE_PARALLEL_HDF5@)
++endif()
++if(NOT DEFINED HIGHFIVE_USE_BOOST)
++  option(HIGHFIVE_USE_BOOST "Enable Boost Support" @HIGHFIVE_USE_BOOST@)
++endif()
++
++# Pass on dependencies in target project build
++if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/HighFiveTargetDeps.cmake")
++  include("${CMAKE_CURRENT_LIST_DIR}/HighFiveTargetDeps.cmake")
++endif()
+diff --git a/CMake/HighFiveTargetDeps.cmake b/CMake/HighFiveTargetDeps.cmake
+new file mode 100644
+index 0000000..5009831
+--- /dev/null
++++ b/CMake/HighFiveTargetDeps.cmake
+@@ -0,0 +1,67 @@
++# Link against target system libs
++# -------------------------------
++
++# therefore making it possible to have new dependencies each build
++if(NOT TARGET highfive_deps)
++  add_library(highfive_deps INTERFACE)
++else()
++# Reset if imported
++set_target_properties(highfive_deps PROPERTIES
++  INTERFACE_COMPILE_DEFINITIONS ""
++  INTERFACE_COMPILE_OPTIONS ""
++  INTERFACE_INCLUDE_DIRECTORIES ""
++  INTERFACE_LINK_LIBRARIES ""
++  INTERFACE_LINK_OPTIONS ""
++  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES ""
++)
++endif()
++
++
++# HDF5
++if(NOT DEFINED HDF5_C_LIBRARIES)
++  set(HDF5_NO_FIND_PACKAGE_CONFIG_FILE TRUE)  # Consistency
++  set(HDF5_PREFER_PARALLEL ${HIGHFIVE_PARALLEL_HDF5})
++  find_package(HDF5 REQUIRED)
++endif()
++
++if(HIGHFIVE_PARALLEL_HDF5 AND NOT HDF5_IS_PARALLEL)
++  message(WARNING "Parallel HDF5 requested but libhdf5 doesnt support it")
++endif()
++
++target_include_directories(highfive_deps SYSTEM INTERFACE ${HDF5_INCLUDE_DIRS})
++target_link_libraries(highfive_deps INTERFACE ${HDF5_C_LIBRARIES})
++target_compile_definitions(highfive_deps INTERFACE ${HDF5_DEFINITIONS})
++
++# Boost
++if(HIGHFIVE_USE_BOOST)
++  set(Boost_NO_BOOST_CMAKE TRUE)  # Consistency
++  find_package(Boost REQUIRED COMPONENTS system serialization)
++  # Dont use imported targets yet, not avail before cmake 3.5
++  target_include_directories(highfive_deps SYSTEM INTERFACE ${Boost_INCLUDE_DIR})
++  target_compile_definitions(highfive_deps INTERFACE BOOST_ALL_NO_LIB H5_USE_BOOST)
++endif()
++
++# MPI
++if(HIGHFIVE_PARALLEL_HDF5 OR HDF5_IS_PARALLEL)
++  find_package(MPI REQUIRED)
++  target_include_directories(highfive_deps SYSTEM INTERFACE ${MPI_CXX_INCLUDE_PATH})
++  target_link_libraries(highfive_deps INTERFACE ${MPI_CXX_LIBRARIES})
++  if(CMAKE_VERSION VERSION_LESS 3.13)
++    target_link_libraries(highfive_deps INTERFACE ${MPI_CXX_LINK_FLAGS})
++  else()
++    target_link_options(highfive_deps INTERFACE "SHELL:${MPI_CXX_LINK_FLAGS}")
++  endif()
++endif()
++
++# Propagate to HighFive
++target_link_libraries(HighFive INTERFACE highfive_deps)
++target_compile_definitions(HighFive INTERFACE MPI_NO_CPPBIND)  # No c++ bindings
++
++# Ensure we activate at least C++11
++if(NOT DEFINED CMAKE_CXX_STANDARD)
++  if(CMAKE_VERSION VERSION_LESS "3.1")
++    message(WARNING "HighFive requires at least c++11. You may need to set CMAKE_CXX_STANDARD.")
++  else()
++    target_compile_features(HighFive INTERFACE cxx_std_11)
++  endif()
++endif()
+\ No newline at end of file
+diff --git a/CMake/HighFiveTargetExport.cmake b/CMake/HighFiveTargetExport.cmake
+new file mode 100644
+index 0000000..0767fa4
+--- /dev/null
++++ b/CMake/HighFiveTargetExport.cmake
+@@ -0,0 +1,48 @@
++add_library(HighFive INTERFACE)
++add_library(highfive_deps INTERFACE)
++
++# Public headers
++target_include_directories(HighFive INTERFACE
++  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
++  "$<INSTALL_INTERFACE:include>")
++
++
++# Generate ${PROJECT_NAME}Config.cmake
++
++include(CMakePackageConfigHelpers)
++configure_package_config_file(${CMAKE_CURRENT_LIST_DIR}/HighFiveConfig.cmake.in
++  ${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
++  INSTALL_DESTINATION share/${PROJECT_NAME}/CMake)
++
++write_basic_package_version_file(
++    ${PROJECT_NAME}ConfigVersion.cmake
++    VERSION ${PROJECT_VERSION}
++    COMPATIBILITY AnyNewerVersion)
++
++install(FILES
++    CMake/HighFiveTargetDeps.cmake
++    ${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
++    ${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
++  DESTINATION share/${PROJECT_NAME}/CMake)
++
++
++# Generate ${PROJECT_NAME}Targets.cmake;
++# Provides IMPORTED targets when using this project from build/install trees.
++
++# NOTE: the export file is ${PROJECT_NAME}Targets to support when HighFive
++# is built within a 3rd-party project (X). Other projects can find and import
++# X-Targets.cmake containing the HighFive target
++
++# Specify targets to include in the HighFive Export
++install(TARGETS HighFive highfive_deps
++        EXPORT HighFiveTargets
++        INCLUDES DESTINATION include)
++
++# Generate & install the Export for the INSTALL_INTERFACE
++install(EXPORT HighFiveTargets
++        FILE ${PROJECT_NAME}Targets.cmake
++        DESTINATION share/${PROJECT_NAME}/CMake)
++
++# Generate the Export for the BUILD_INTERACE (hardly used)
++export(EXPORT HighFiveTargets
++       FILE "${PROJECT_BINARY_DIR}/${PROJECT_NAME}Targets.cmake")
+diff --git a/CMake/PackageConfig.cmake b/CMake/PackageConfig.cmake
+deleted file mode 100644
+index ab4e3f4..0000000
+--- a/CMake/PackageConfig.cmake
++++ /dev/null
+@@ -1,57 +0,0 @@
+-add_library(HighFive INTERFACE)
+-
+-# Public headers
+-target_include_directories(HighFive INTERFACE
+-  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+-  "$<INSTALL_INTERFACE:include>")
+-target_include_directories(HighFive SYSTEM INTERFACE ${HDF5_INCLUDE_DIRS})
+-target_link_libraries(HighFive INTERFACE ${HDF5_LIBRARIES})
+-target_compile_definitions(HighFive INTERFACE ${HDF5_DEFINITIONS})
+-
+-# MPI
+-if(HIGHFIVE_PARALLEL_HDF5 OR HDF5_IS_PARALLEL)
+-  target_include_directories(HighFive SYSTEM INTERFACE ${MPI_CXX_INCLUDE_PATH})
+-  target_link_libraries(HighFive INTERFACE ${MPI_CXX_LIBRARIES})
+-  if(CMAKE_VERSION VERSION_LESS 3.13)
+-    target_link_libraries(HighFive INTERFACE ${MPI_CXX_LINK_FLAGS})
+-  else()
+-    target_link_options(HighFive INTERFACE "SHELL:${MPI_CXX_LINK_FLAGS}")
+-  endif()
+-endif()
+-
+-# BOOST
+-if(USE_BOOST)
+-  target_include_directories(HighFive SYSTEM INTERFACE ${Boost_INCLUDE_DIR})
+-  target_compile_definitions(HighFive INTERFACE -DH5_USE_BOOST)
+-  target_link_libraries(HighFive INTERFACE ${Boost_SERIALIZATION_LIBRARIES})
+-endif()
+-
+-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/highfive
+-  DESTINATION "include")
+-
+-include(CMakePackageConfigHelpers)
+-configure_package_config_file(${CMAKE_CURRENT_LIST_DIR}/HighFiveConfig.cmake.in
+-  ${PROJECT_BINARY_DIR}/HighFiveConfig.cmake
+-  INSTALL_DESTINATION share/${PROJECT_NAME}/CMake)
+-
+-include(CMakePackageConfigHelpers)
+-write_basic_package_version_file(
+-    ${PROJECT_NAME}ConfigVersion.cmake
+-    VERSION ${PROJECT_VERSION}
+-    COMPATIBILITY AnyNewerVersion)
+-
+-install(FILES ${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
+-  ${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
+-  DESTINATION share/${PROJECT_NAME}/CMake)
+-
+-# Generate ${PROJECT_NAME}Targets.cmake; is written after the CMake run
+-# succeeds. Provides IMPORTED targets when using this project from the install
+-# tree.
+-install(EXPORT HighFiveTargets FILE ${PROJECT_NAME}Targets.cmake
+-  DESTINATION share/${PROJECT_NAME}/CMake)
+-
+-install(TARGETS HighFive EXPORT ${PROJECT_NAME}Targets
+-  INCLUDES DESTINATION include)
+-
+-export(EXPORT HighFiveTargets
+-  FILE "${PROJECT_BINARY_DIR}/${PROJECT_NAME}Targets.cmake")
+diff --git a/CMake/config/CompilerFlagsHelpers.cmake b/CMake/config/CompilerFlagsHelpers.cmake
+index 2a31084..07c3ad4 100644
+--- a/CMake/config/CompilerFlagsHelpers.cmake
++++ b/CMake/config/CompilerFlagsHelpers.cmake
+@@ -83,12 +83,16 @@ foreach(COMPILER_LANGUAGE ${SUPPORTED_COMPILER_LANGUAGE_LIST})
+ 
+ 	## GCC, CLANG, rest of the world
+ 	else()
+-		string(APPEND CMAKE_${COMPILER_LANGUAGE}_WARNING_ALL
+-			" -Wall -Wextra -Werror -Wshadow -Wnon-virtual-dtor -Wunused -Woverloaded-virtual"
++		string(APPEND CMAKE_${COMPILER_LANGUAGE}_WARNING_ALL " -Wall -Wextra")
++		set(CMAKE_${COMPILER_LANGUAGE}_WARNING_DEBUG)
++		string(APPEND CMAKE_${COMPILER_LANGUAGE}_WARNING_DEBUG
++			" -Werror -Wshadow -Wnon-virtual-dtor -Wunused -Woverloaded-virtual"
+ 			" -Wformat=2 -Wconversion -Wsign-conversion"
+-			" -Wno-error=conversion -Wno-error=sign-conversion")  # Too common to be considered errors
++		)
+ 		if(NOT CMAKE_${COMPILER_LANGUAGE}_COMPILER_IS_ICC)
+-			string(APPEND CMAKE_${COMPILER_LANGUAGE}_WARNING_ALL " -Wcast-align -Wpedantic -Wdouble-promotion")
++			string(APPEND CMAKE_${COMPILER_LANGUAGE}_WARNING_DEBUG
++				" -Wpedantic -Wcast-align -Wdouble-promotion"
++			)
+ 		endif()
+ 
+ 		set(CMAKE_${COMPILER_LANGUAGE}_DEBUGINFO_FLAGS "-g")
+diff --git a/CMake/config/ReleaseDebugAutoFlags.cmake b/CMake/config/ReleaseDebugAutoFlags.cmake
+index 320d468..abf6e76 100644
+--- a/CMake/config/ReleaseDebugAutoFlags.cmake
++++ b/CMake/config/ReleaseDebugAutoFlags.cmake
+@@ -37,14 +37,13 @@ include(CompilerFlagsHelpers)
+ 
+ 
+ set(CMAKE_C_FLAGS_RELEASE  "${CMAKE_C_WARNING_ALL} ${CMAKE_C_OPT_NORMAL}")
+-set(CMAKE_C_FLAGS_DEBUG  "${CMAKE_C_DEBUGINFO_FLAGS} ${CMAKE_C_WARNING_ALL} ${CMAKE_C_OPT_NONE} ${CMAKE_C_STACK_PROTECTION}")
+-set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_DEBUGINFO_FLAGS} ${CMAKE_C_WARNING_ALL} ${CMAKE_C_OPT_NORMAL}")
++set(CMAKE_C_FLAGS_DEBUG  "${CMAKE_C_DEBUGINFO_FLAGS} ${CMAKE_C_WARNING_ALL} ${CMAKE_C_WARNING_DEBUG} ${CMAKE_C_OPT_NONE} ${CMAKE_C_STACK_PROTECTION}")
++set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_DEBUGINFO_FLAGS} ${CMAKE_C_WARNING_ALL} ${CMAKE_C_WARNING_DEBUG} ${CMAKE_C_OPT_NORMAL}")
+ set(CMAKE_C_FLAGS_FAST "${CMAKE_C_WARNING_ALL} ${CMAKE_C_OPT_FASTEST} ${CMAKE_C_LINK_TIME_OPT} ${CMAKE_C_GEN_NATIVE}")
+ 
+ 
+ 
+ set(CMAKE_CXX_FLAGS_RELEASE  "${CMAKE_CXX_WARNING_ALL} ${CMAKE_CXX_OPT_NORMAL}")
+-set(CMAKE_CXX_FLAGS_DEBUG  "${CMAKE_CXX_DEBUGINFO_FLAGS} ${CMAKE_CXX_WARNING_ALL} ${CMAKE_CXX_OPT_NONE} ${CMAKE_CXX_STACK_PROTECTION}")
+-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_DEBUGINFO_FLAGS} ${CMAKE_CXX_WARNING_ALL} ${CMAKE_CXX_OPT_NORMAL}")
++set(CMAKE_CXX_FLAGS_DEBUG  "${CMAKE_CXX_DEBUGINFO_FLAGS} ${CMAKE_CXX_WARNING_ALL} ${CMAKE_CXX_WARNING_DEBUG} ${CMAKE_CXX_OPT_NONE} ${CMAKE_CXX_STACK_PROTECTION}")
++set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_DEBUGINFO_FLAGS} ${CMAKE_CXX_WARNING_ALL} ${CMAKE_C_WARNING_DEBUG} ${CMAKE_CXX_OPT_NORMAL}")
+ set(CMAKE_CXX_FLAGS_FAST "${CMAKE_CXX_WARNING_ALL} ${CMAKE_CXX_OPT_FASTEST} ${CMAKE_CXX_LINK_TIME_OPT} ${CMAKE_CXX_GEN_NATIVE}")
+-
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 29a58c1..b783363 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -21,41 +21,57 @@ if(NOT COMPILER_SUPPORTS_CXX11)
+   message(FATAL_ERROR "HighFive version >= 2.0 requires c++ standard >= c++11")
+ endif()
+ 
+-option(HIGHFIVE_UNIT_TESTS "Enable unit tests" TRUE)
+-option(USE_BOOST "Enable Boost Support" TRUE)
+-option(USE_EIGEN "Enable Eigen testing" FALSE)
+-option(USE_XTENSOR "Enable xtensor testing" FALSE)
+-option(HIGHFIVE_EXAMPLES "Compile examples" TRUE)
+-option(HIGHFIVE_PARALLEL_HDF5 "Enable Parallel HDF5 support" FALSE)
+-
+-# Disable test if Boost will not be loaded, or if HighFive is a sub-project
+-if (NOT USE_BOOST OR NOT CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+-  set(HIGHFIVE_UNIT_TESTS FALSE)
+-endif()
++# Compat within Highfive 2.x series
++set(USE_BOOST ON CACHE BOOL "Enable Boost Support")
++set(USE_EIGEN OFF CACHE BOOL "Enable Eigen testing")
++set(USE_XTENSOR OFF CACHE BOOL "Enable xtensor testing")
++mark_as_advanced(USE_BOOST USE_EIGEN USE_XTENSOR)
++
++option(HIGHFIVE_USE_BOOST "Enable Boost Support" ${USE_BOOST})
++option(HIGHFIVE_USE_EIGEN "Enable Eigen testing" ${USE_EIGEN})
++option(HIGHFIVE_USE_XTENSOR "Enable xtensor testing" ${USE_XTENSOR})
++option(HIGHFIVE_UNIT_TESTS "Enable unit tests" ON)
++option(HIGHFIVE_EXAMPLES "Compile examples" ON)
++option(HIGHFIVE_PARALLEL_HDF5 "Enable Parallel HDF5 support" OFF)
++
++# In deplomyents we probably don't want/cant have dynamic dependencies
++option(HIGHFIVE_USE_INSTALL_DEPS "End applications by default use detected dependencies here" OFF)
++mark_as_advanced(HIGHFIVE_USE_INSTALL_DEPS)
+ 
+-# Pre-requisites
++# HighFive as a sub-project and using the the same filename
++# Define the HighFive INTERFACE target
++include(${PROJECT_SOURCE_DIR}/CMake/HighFiveTargetExport.cmake)
+ 
+-if(HIGHFIVE_PARALLEL_HDF5)
+-  set(HDF5_PREFER_PARALLEL TRUE)
+-endif()
+-find_package(HDF5 REQUIRED)
++# Search main dependencies (hdf5, boost, mpi) and link them to the HighFive INTERFACE target
++include(${PROJECT_SOURCE_DIR}/CMake/HighFiveTargetDeps.cmake)
+ 
+-set(Boost_NO_BOOST_CMAKE TRUE)
+-if(USE_BOOST)
+-  set(BOOST_REQ_COMPONENTS system serialization)
++# Installation of headers
++install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
++  DESTINATION "include")
++
++
++# Preparing local building (tests, examples)
++# ------------------------------------------
++
++# Disable test if Boost was expressly disabled, or if HighFive is a sub-project
++if (NOT HIGHFIVE_USE_BOOST OR NOT CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+   if(HIGHFIVE_UNIT_TESTS)
+-    list(APPEND BOOST_REQ_COMPONENTS unit_test_framework)
++    message(WARNING "Unit tests have been DISABLED. (HIGHFIVE_USE_BOOST: ${HIGHFIVE_USE_BOOST})")
+   endif()
+-  find_package(Boost COMPONENTS ${BOOST_REQ_COMPONENTS})
++  set(HIGHFIVE_UNIT_TESTS FALSE)
++endif()
++
++if(HIGHFIVE_UNIT_TESTS)
++  set(Boost_NO_BOOST_CMAKE TRUE)  # Consistency
++  find_package(Boost COMPONENTS system serialization unit_test_framework)
+   if (NOT Boost_FOUND)
+     message(FATAL_ERROR "\
+       Boost not found which is required for efficient multi-dimension and tests.\n\
+-      To disable support please use cmake .. -DUSE_BOOST=OFF.")
++      To disable support please use cmake .. -DHIGHFIVE_USE_BOOST=OFF.")
+   endif()
+-  add_definitions(-DH5_USE_BOOST)
+ endif()
+ 
+-if(USE_EIGEN)
++if(HIGHFIVE_USE_EIGEN)
+   find_package(Eigen3 NO_MODULE)
+   if(NOT Eigen3_FOUND)
+     find_package(PkgConfig)
+@@ -67,7 +83,7 @@ if(USE_EIGEN)
+   endif()
+ endif()
+ 
+-if(USE_XTENSOR)
++if(HIGHFIVE_USE_XTENSOR)
+   if(NOT COMPILER_SUPPORTS_CXX14)
+     message(SEND_ERROR "C++ compiler does not support standard c++14, required to support xtensor.")
+   else()
+@@ -78,13 +94,6 @@ if(USE_XTENSOR)
+   endif()
+ endif()
+ 
+-if(HIGHFIVE_PARALLEL_HDF5 OR HDF5_IS_PARALLEL)
+-  find_package(MPI REQUIRED)
+-  add_definitions("-DMPI_NO_CPPBIND")
+-endif()
+-
+-# HighFive as a sub-project and using the the same filename
+-include(${PROJECT_SOURCE_DIR}/CMake/PackageConfig.cmake)
+ 
+ # Some compilers default to old C++. If not chosen, select C++ 14 or 11 as available
+ select_recent_cxx_standard_available()
+@@ -104,3 +113,4 @@ if(HIGHFIVE_UNIT_TESTS)
+ endif()
+ 
+ add_subdirectory(doc)
++
+diff --git a/README.md b/README.md
+index 2b69a84..64decf7 100644
+--- a/README.md
++++ b/README.md
+@@ -21,11 +21,11 @@ HighFive does not require an additional library and supports both HDF5 thread sa
+ 
+ 
+ ### Dependencies
+-- libhdf5
+-- (optional, opt-in with *HIGHFIVE_PARALLEL_HDF5*) libhdf5-mpi
+-- (optional, opt-out with *USE_BOOST*) boost >= 1.41
+-- (optional, opt-in with *USE_EIGEN*) eigen3
+-- (optional, opt-in with *USE_XTENSOR*) xtensor
++- hdf5 (dev)
++- hdf5-mpi (optional, opt-in with -D*DHIGHFIVE_PARALLEL_HDF5*=ON)
++- boost >= 1.41 (recommended, opt-out with -D*DHIGHFIVE_USE_BOOST*=OFF)
++- eigen3 (optional, opt-in with -D*HIGHFIVE_USE_EIGEN*=ON)
++- xtensor (optional, opt-in with -D*HIGHFIVE_USE_XTENSOR*=ON)
+ 
+ 
+ ### CMake integration
+@@ -109,9 +109,9 @@ For several 'standard' use cases the [highfive/H5Easy.hpp](include/highfive/H5Ea
+     -   scalars (to/from an extendible DataSet),
+     -   strings,
+     -   vectors (of standard types),
+-    -   [Eigen::Matrix](http://eigen.tuxfamily.org) (optional, enable CMake option `USE_EIGEN`),
++    -   [Eigen::Matrix](http://eigen.tuxfamily.org) (optional, enable CMake option `HIGHFIVE_USE_EIGEN`),
+     -   [xt::xarray](https://github.com/QuantStack/xtensor) and [xt::xtensor](https://github.com/QuantStack/xtensor)
+-        (optional, enable CMake option `USE_XTENSOR`).
++        (optional, enable CMake option `HIGHFIVE_USE_XTENSOR`).
+ 
+ *   Getting in a single line:
+ 
+diff --git a/src/examples/CMakeLists.txt b/src/examples/CMakeLists.txt
+index 4681007..deb064b 100644
+--- a/src/examples/CMakeLists.txt
++++ b/src/examples/CMakeLists.txt
+@@ -6,7 +6,7 @@ function(compile_example exemple_source)
+     string(REPLACE ".cpp" "_bin" example_name ${example_filename})
+ 
+     if(${example_filename} MATCHES ".*boost.*")
+-        if(NOT USE_BOOST)
++        if(NOT HIGHFIVE_USE_BOOST)
+             return()
+         endif()
+     endif()
+diff --git a/tests/unit/CMakeLists.txt b/tests/unit/CMakeLists.txt
+index 380f0f6..e1ddd2c 100644
+--- a/tests/unit/CMakeLists.txt
++++ b/tests/unit/CMakeLists.txt
+@@ -1,18 +1,16 @@
+-if(NOT HIGHFIVE_UNIT_TESTS OR NOT USE_BOOST)
++if(NOT HIGHFIVE_UNIT_TESTS)
+   return()
+ endif()
+ 
+-include_directories(${HDF5_INCLUDE_DIRS})
+-
++# NOTE: These unit tests expect linking with boost test framework lib
+ if(NOT Boost_USE_STATIC_LIBS)
+   add_definitions(-DBOOST_TEST_DYN_LINK=TRUE)
+ endif()
+ 
+-
++## Base tests
+ foreach(test_name tests_high_five_base tests_high_five_multi_dims tests_high_five_easy)
+   add_executable(${test_name} "${test_name}.cpp")
+   target_link_libraries(${test_name} ${Boost_UNIT_TEST_FRAMEWORK_LIBRARIES} HighFive)
+-
+   add_test(NAME ${test_name} COMMAND ${test_name})
+ endforeach()
+ 
+-- 
+2.21.0 (Apple Git-122.2)
+

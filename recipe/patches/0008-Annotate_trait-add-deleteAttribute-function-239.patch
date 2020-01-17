@@ -1,0 +1,148 @@
+From 55dae5632461535485f05f90308fc65899ee8cc9 Mon Sep 17 00:00:00 2001
+From: Nicolas Cornu <nicolas.cornu@epfl.ch>
+Date: Fri, 10 Jan 2020 15:17:20 +0100
+Subject: [PATCH 08/10] Annotate_trait: add deleteAttribute function (#239)
+
+---
+ include/highfive/bits/H5Annotate_traits.hpp   | 13 ++++-----
+ .../highfive/bits/H5Annotate_traits_misc.hpp  |  9 +++++++
+ tests/unit/tests_high_five_base.cpp           | 27 ++++++++++++++-----
+ 3 files changed, 37 insertions(+), 12 deletions(-)
+
+diff --git a/include/highfive/bits/H5Annotate_traits.hpp b/include/highfive/bits/H5Annotate_traits.hpp
+index db32116..7da6dd4 100644
+--- a/include/highfive/bits/H5Annotate_traits.hpp
++++ b/include/highfive/bits/H5Annotate_traits.hpp
+@@ -37,9 +37,6 @@ class AnnotateTraits {
+     /// \param space Associated DataSpace
+     /// informations
+     /// \return Attribute Object
+-    ///
+-    ///
+-    ///
+     template <typename Type>
+     Attribute createAttribute(const std::string& attribute_name,
+                               const DataSpace& space);
+@@ -49,18 +46,22 @@ class AnnotateTraits {
+     /// write to it, inferring the DataSpace from data.
+     /// \param attribute_name identifier of the attribute
+     /// \param data Associated data to write, must support DataSpace::From, see
+-    ///  \ref DataSpace for more information
++    /// \ref DataSpace for more information
+     /// \return Attribute Object
+     ///
+     template <typename T>
+     Attribute createAttribute(const std::string& attribute_name,
+                               const T& data);
+ 
++    ///
++    /// \brief deleteAttribute let you delete an attribute by its name.
++    /// \param attribute_name identifier of the attribute
++    void deleteAttribute(const std::string& attribute_name);
++
+     ///
+     /// \brief open an existing attribute with the name attribute_name
+-    /// \param attribute_name
++    /// \param attribute_name identifier of the attribute
+     /// \return the attribute object
+-    ///
+     Attribute getAttribute(const std::string& attribute_name) const;
+ 
+     ///
+diff --git a/include/highfive/bits/H5Annotate_traits_misc.hpp b/include/highfive/bits/H5Annotate_traits_misc.hpp
+index 98476c1..fba8457 100644
+--- a/include/highfive/bits/H5Annotate_traits_misc.hpp
++++ b/include/highfive/bits/H5Annotate_traits_misc.hpp
+@@ -55,6 +55,15 @@ AnnotateTraits<Derivate>::createAttribute(const std::string& attribute_name,
+     return att;
+ }
+ 
++template<typename Derivate>
++inline void
++AnnotateTraits<Derivate>::deleteAttribute(const std::string& attribute_name) {
++    if (H5Adelete(static_cast<const Derivate*>(this)->getId(), attribute_name.c_str()) < 0) {
++        HDF5ErrMapper::ToException<AttributeException>(
++                std::string("Unable to delete attribute \"") + attribute_name + "\":");
++    }
++}
++
+ template <typename Derivate>
+ inline Attribute AnnotateTraits<Derivate>::getAttribute(
+     const std::string& attribute_name) const {
+diff --git a/tests/unit/tests_high_five_base.cpp b/tests/unit/tests_high_five_base.cpp
+index 6cf1564..bebdc03 100644
+--- a/tests/unit/tests_high_five_base.cpp
++++ b/tests/unit/tests_high_five_base.cpp
+@@ -49,7 +49,7 @@ BOOST_AUTO_TEST_CASE(HighFiveBasic) {
+ 
+     // check if the dataset exist
+     bool dataset_exist = file.exist(DATASET_NAME + "_double");
+-    BOOST_CHECK_EQUAL(dataset_exist, false);
++    BOOST_CHECK(!dataset_exist);
+ 
+     // Create a dataset with double precision floating points
+     DataSet dataset_double = file.createDataSet(
+@@ -669,7 +669,7 @@ void readWriteAttributeVectorTest() {
+         BOOST_CHECK_EQUAL(n2, 1);
+ 
+         has_attribute = g.hasAttribute("my_attribute");
+-        BOOST_CHECK_EQUAL(has_attribute, true);
++        BOOST_CHECK(has_attribute);
+ 
+         all_attribute_names = g.listAttributeNames();
+         BOOST_CHECK_EQUAL(all_attribute_names.size(), 1);
+@@ -684,9 +684,9 @@ void readWriteAttributeVectorTest() {
+         a2.write(vec);
+     }
+ 
+-    typename std::vector<T> result1, result2;
+-
+     {
++        typename std::vector<T> result1, result2;
++
+         Attribute a1_read =
+             file.getGroup("dummy_group").getAttribute("my_attribute");
+         a1_read.read(result1);
+@@ -707,6 +707,21 @@ void readWriteAttributeVectorTest() {
+         for (size_t i = 0; i < x_size; ++i)
+             BOOST_CHECK_EQUAL(result2[i], vec[i]);
+     }
++
++    // Delete some attributes
++    {
++        // From group
++        auto g = file.getGroup("dummy_group");
++        g.deleteAttribute("my_attribute");
++        auto n = g.getNumberAttributes();
++        BOOST_CHECK_EQUAL(n, 0);
++
++        // From dataset
++        auto d = file.getDataSet("/dummy_group/dummy_dataset");
++        d.deleteAttribute("my_attribute_copy");
++        n = g.getNumberAttributes();
++        BOOST_CHECK_EQUAL(n, 0);
++    }
+ }
+ 
+ BOOST_AUTO_TEST_CASE(ReadWriteAttributeVectorString) {
+@@ -907,7 +922,7 @@ void attribute_scalar_rw() {
+     Group g = h5file.createGroup("metadata");
+ 
+     bool family_exist = g.hasAttribute("family");
+-    BOOST_CHECK_EQUAL(family_exist, false);
++    BOOST_CHECK(!family_exist);
+ 
+     // write a scalar attribute
+     {
+@@ -920,7 +935,7 @@ void attribute_scalar_rw() {
+ 
+     // test if attribute exist
+     family_exist = g.hasAttribute("family");
+-    BOOST_CHECK_EQUAL(family_exist, true);
++    BOOST_CHECK(family_exist);
+ 
+     // read back a scalar attribute
+     {
+-- 
+2.21.0 (Apple Git-122.2)
+

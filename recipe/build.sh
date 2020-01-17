@@ -6,7 +6,6 @@ cmake \
   -DCMAKE_BUILD_TYPE=Release \
   -DHIGHFIVE_UNIT_TESTS=ON \
   -DHIGHFIVE_EXAMPLES=OFF \
-  -DHIGHFIVE_UNIT_TESTS=OFF \
   .
 
 make install
