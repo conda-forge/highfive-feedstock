@@ -1,0 +1,59 @@
+From a2113fedea7d65b7a928213cc116d6197957bb8a Mon Sep 17 00:00:00 2001
+From: Nicolas Cornu <nicolas.cornu@epfl.ch>
+Date: Wed, 8 Jan 2020 11:27:14 +0100
+Subject: [PATCH 06/10] Remove old "using namespace" (#267)
+
+---
+ include/highfive/H5Exception.hpp  | 3 ++-
+ include/highfive/bits/H5Utils.hpp | 7 -------
+ 2 files changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/include/highfive/H5Exception.hpp b/include/highfive/H5Exception.hpp
+index ccce029..9098c74 100644
+--- a/include/highfive/H5Exception.hpp
++++ b/include/highfive/H5Exception.hpp
+@@ -9,6 +9,7 @@
+ #ifndef H5EXCEPTION_HPP
+ #define H5EXCEPTION_HPP
+ 
++#include <memory>
+ #include <stdexcept>
+ #include <string>
+ 
+@@ -64,7 +65,7 @@ class Exception : public std::exception {
+ 
+   protected:
+     std::string _errmsg;
+-    details::Mem::shared_ptr<Exception> _next;
++    std::shared_ptr<Exception> _next;
+     hid_t _err_major, _err_minor;
+ 
+     friend struct HDF5ErrMapper;
+diff --git a/include/highfive/bits/H5Utils.hpp b/include/highfive/bits/H5Utils.hpp
+index 7d379c7..7c4d9d1 100644
+--- a/include/highfive/bits/H5Utils.hpp
++++ b/include/highfive/bits/H5Utils.hpp
+@@ -14,7 +14,6 @@
+ #include <array>
+ #include <cstddef> // __GLIBCXX__
+ #include <exception>
+-#include <memory>
+ #include <string>
+ #include <type_traits>
+ #include <vector>
+@@ -194,12 +193,6 @@ inline std::vector<std::size_t> to_vector_size_t(std::vector<std::size_t> vec){
+     return vec;
+ }
+ 
+-// shared ptr portability
+-// was used pre-C++11, kept for compatibility
+-namespace Mem {
+-    using namespace std;
+-} // end Mem
+-
+ } // end details
+ }
+ 
+-- 
+2.21.0 (Apple Git-122.2)
+

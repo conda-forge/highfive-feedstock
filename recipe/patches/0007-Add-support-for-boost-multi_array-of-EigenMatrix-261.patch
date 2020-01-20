@@ -1,0 +1,230 @@
+From 8c2b5619197b26a95a14b81047b958cb44d1404a Mon Sep 17 00:00:00 2001
+From: Alexandru Savulescu <46521150+alexsavulescu@users.noreply.github.com>
+Date: Thu, 9 Jan 2020 14:43:20 +0100
+Subject: [PATCH 07/10] Add support for boost::multi_array of EigenMatrix #261
+ (#265)
+
+* Add support for boost::multi_array of EigenMatrix #261
+---
+ include/highfive/H5DataSpace.hpp           |  4 ++
+ include/highfive/bits/H5Converter_misc.hpp | 66 ++++++++++++++++++++++
+ include/highfive/bits/H5Dataspace_misc.hpp | 14 +++--
+ tests/unit/tests_high_five_base.cpp        | 63 +++++++++++++++++++++
+ 4 files changed, 143 insertions(+), 4 deletions(-)
+
+diff --git a/include/highfive/H5DataSpace.hpp b/include/highfive/H5DataSpace.hpp
+index ba8482d..026f6f9 100644
+--- a/include/highfive/H5DataSpace.hpp
++++ b/include/highfive/H5DataSpace.hpp
+@@ -137,6 +137,10 @@ class DataSpace : public Object {
+ 
+     template <typename Value, int M, int N>
+     static DataSpace From(const std::vector<Eigen::Matrix<Value, M, N>>& vec);
++#ifdef H5_USE_BOOST
++    template <typename Value, int M, int N, size_t Dims>
++    static DataSpace From(const boost::multi_array<Eigen::Matrix<Value, M, N>, Dims>& vec);
++#endif
+ #endif
+ 
+   protected:
+diff --git a/include/highfive/bits/H5Converter_misc.hpp b/include/highfive/bits/H5Converter_misc.hpp
+index 17d744d..c513230 100644
+--- a/include/highfive/bits/H5Converter_misc.hpp
++++ b/include/highfive/bits/H5Converter_misc.hpp
+@@ -283,6 +283,20 @@ inline size_t compute_total_size(const std::vector<Eigen::Matrix<T,M,N>>& vec)
+     });
+ }
+ 
++#ifdef H5_USE_BOOST
++// compute size for  boost::multi_array of Eigens
++template <typename T, size_t Dims>
++inline size_t compute_total_size(const boost::multi_array<T, Dims>& vec) {
++    return std::accumulate(vec.origin(),
++                           vec.origin() + vec.num_elements(),
++                           size_t{0u},
++                           [](size_t so_far, const auto& v) {
++                               return so_far +
++                                      static_cast<size_t>(v.rows()) * static_cast<size_t>(v.cols());
++                           });
++}
++#endif
++
+ //compute total row size for std::vector of Eigens
+ template <typename T, int M, int N>
+ inline size_t compute_total_row_size(const std::vector<Eigen::Matrix<T,M,N>>& vec)
+@@ -388,7 +402,59 @@ struct data_converter<std::vector<Eigen::Matrix<T,M,N>>, void> {
+     DataSpace& _space;
+ };
+ 
++#ifdef H5_USE_BOOST
++template <typename T, int M, int N, std::size_t Dims>
++struct data_converter<boost::multi_array<Eigen::Matrix<T, M, N>, Dims>, void> {
++    typedef typename boost::multi_array<Eigen::Matrix<T, M, N>, Dims> MultiArrayEigen;
++
++    inline data_converter(const MultiArrayEigen&, DataSpace& space)
++        : _dims(space.getDimensions())
++        , _space(space) {
++        assert(_dims.size() == Dims);
++    }
+ 
++    inline typename type_of_array<T>::type*
++    transform_read(const MultiArrayEigen& /*array*/) {
++        _vec_align.resize(compute_total_size(_space.getDimensions()));
++        return _vec_align.data();
++    }
++
++    inline typename type_of_array<T>::type* transform_write(MultiArrayEigen& array) {
++        _vec_align.reserve(compute_total_size(array));
++        for (auto e = array.origin(); e < array.origin() + array.num_elements(); ++e) {
++            std::copy(e->data(), e->data() + e->size(), std::back_inserter(_vec_align));
++        }
++        return _vec_align.data();
++    }
++
++    inline void process_result(MultiArrayEigen& vec) {
++        T* start = _vec_align.data();
++        if (M != -1 && N != -1) {
++            for (auto v = vec.origin(); v < vec.origin() + vec.num_elements(); ++v) {
++                *v = Eigen::Map<Eigen::Matrix<T, M, N>>(start, v->rows(), v->cols());
++                start += v->rows() * v->cols();
++            }
++        } else {
++            if (vec.origin()->rows() > 0 && vec.origin()->cols() > 0) {
++                const auto VEC_M = vec.origin()->rows(), VEC_N = vec.origin()->cols();
++                for (auto v = vec.origin(); v < vec.origin() + vec.num_elements(); ++v) {
++                    assert(v->rows() == VEC_M && v->cols() == VEC_N);
++                    *v = Eigen::Map<Eigen::Matrix<T, M, N>>(start, VEC_M, VEC_N);
++                    start += VEC_M * VEC_N;
++                }
++            } else {
++                throw DataSetException(
++                    "Dynamic size(-1) used without pre-defined multi_array data layout.\n"
++                    "Initialize vector elements using  MatrixXd::Zero");
++            }
++        }
++    }
++
++    std::vector<size_t> _dims;
++    DataSpace& _space;
++    std::vector<typename type_of_array<T>::type> _vec_align;
++};
++#endif
+ 
+ #endif
+ 
+diff --git a/include/highfive/bits/H5Dataspace_misc.hpp b/include/highfive/bits/H5Dataspace_misc.hpp
+index 64508f6..d6f6689 100644
+--- a/include/highfive/bits/H5Dataspace_misc.hpp
++++ b/include/highfive/bits/H5Dataspace_misc.hpp
+@@ -168,10 +168,7 @@ inline DataSpace DataSpace::From(const std::array<Value, N>& ) {
+ template <typename Value, std::size_t Dims>
+ inline DataSpace
+ DataSpace::From(const boost::multi_array<Value, Dims>& container) {
+-    std::vector<size_t> dims(Dims);
+-    for (std::size_t i = 0; i < Dims; ++i) {
+-        dims[i] = container.shape()[i];
+-    }
++    std::vector<size_t> dims(container.shape(), container.shape() + Dims);
+     return DataSpace(dims);
+ }
+ 
+@@ -206,6 +203,15 @@ DataSpace::From(const std::vector<Eigen::Matrix<Value, M, N>>& vec) {
+     return DataSpace(dims);
+ }
+ 
++#ifdef H5_USE_BOOST
++template <typename Value, int M, int N, size_t Dims>
++inline DataSpace DataSpace::From(const boost::multi_array<Eigen::Matrix<Value, M, N>, Dims>& vec) {
++    std::vector<size_t> dims(vec.shape(), vec.shape() + Dims);
++    dims[Dims - 1] *= static_cast<size_t>(vec.origin()->rows() * vec.origin()->cols());
++    return DataSpace(dims);
++}
++#endif
++
+ #endif
+ 
+ namespace details {
+diff --git a/tests/unit/tests_high_five_base.cpp b/tests/unit/tests_high_five_base.cpp
+index 5293df7..6cf1564 100644
+--- a/tests/unit/tests_high_five_base.cpp
++++ b/tests/unit/tests_high_five_base.cpp
+@@ -1153,6 +1153,7 @@ BOOST_AUTO_TEST_CASE(HighFiveEigen) {
+     auto test = [&DS_NAME, &file](const std::string& test_flavor, const auto& vec_input, auto& vec_output){
+         file.createDataSet(DS_NAME + test_flavor, vec_input).write(vec_input);
+         file.getDataSet(DS_NAME + test_flavor).read(vec_output);
++        BOOST_CHECK(vec_input == vec_output);
+     };
+ 
+     std::string DS_NAME_FLAVOR;
+@@ -1231,6 +1232,68 @@ BOOST_AUTO_TEST_CASE(HighFiveEigen) {
+         BOOST_CHECK_THROW(file.getDataSet(DS_NAME + DS_NAME_FLAVOR).read(vec_out_exception), HighFive::DataSetException);
+     }
+ 
++#ifdef H5_USE_BOOST
++    // boost::multi_array<of EigenVector3f>
++    {
++        DS_NAME_FLAVOR = "BMultiEigenVector3f";
++
++        boost::multi_array<Eigen::Vector3f, 3> vec_in(boost::extents[3][2][2]);
++        for (int i = 0; i < 3; ++i) {
++            for (int j = 0; j < 2; ++j) {
++                for (int k = 0; k < 2; ++k) {
++                    vec_in[i][j][k] = Eigen::Vector3f::Random(3);
++                }
++            }
++        }
++        boost::multi_array<Eigen::Vector3f, 3> vec_out(boost::extents[3][2][2]);
++
++        test(DS_NAME_FLAVOR, vec_in, vec_out);
++    }
+ 
++
++    // boost::multi_array<of EigenMatrixXd>
++    {
++        DS_NAME_FLAVOR = "BMultiEigenMatrixXd";
++
++        boost::multi_array<Eigen::MatrixXd, 3> vec_in(boost::extents[3][2][2]);
++        for (int i = 0; i < 3; ++i) {
++            for (int j = 0; j < 2; ++j) {
++                for (int k = 0; k < 2; ++k) {
++                    vec_in[i][j][k] = Eigen::MatrixXd::Random(3, 3);
++                }
++            }
++        }
++        boost::multi_array<Eigen::MatrixXd, 3> vec_out(boost::extents[3][2][2]);
++        for (int i = 0; i < 3; ++i)
++            for (int j = 0; j < 2; ++j) {
++                for (int k = 0; k < 2; ++k) {
++                    vec_out[i][j][k] = Eigen::MatrixXd::Zero(3, 3);
++                }
++            }
++        test(DS_NAME_FLAVOR, vec_in, vec_out);
++    }
++
++    // boost::mulit_array<of EigenMatrixXd> - exception
++    {
++        DS_NAME_FLAVOR = "BMultiEigenMatrixXdExc";
++
++        boost::multi_array<Eigen::MatrixXd, 3> vec_in(boost::extents[3][2][2]);
++        for (int i = 0; i < 3; ++i) {
++            for (int j = 0; j < 2; ++j) {
++                for (int k = 0; k < 2; ++k) {
++                    vec_in[i][j][k] = Eigen::MatrixXd::Random(3, 3);
++                }
++            }
++        }
++
++        file.createDataSet(DS_NAME + DS_NAME_FLAVOR, vec_in).write(vec_in);
++
++        boost::multi_array<Eigen::MatrixXd, 3> vec_out_exception(boost::extents[3][2][2]);
++
++        BOOST_CHECK_THROW(file.getDataSet(DS_NAME + DS_NAME_FLAVOR).read(vec_out_exception),
++                          HighFive::DataSetException);
++    }
++
++#endif
+ }
+ #endif
+-- 
+2.21.0 (Apple Git-122.2)
+
