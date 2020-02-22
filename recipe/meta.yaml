@@ -22,7 +22,7 @@ source:
     - patches/0010-Rework-dependencies-to-be-dynamic-i.e.-can-be-overri.patch
 
 build:
-  number: 2
+  number: 3
   skip: True  # [win and vc<14]
 
 requirements:
