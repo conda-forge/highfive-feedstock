@@ -1,6 +1,6 @@
 {% set name = "HighFive" %}
-{% set version = "2.1.1" %}
-{% set sha256 = "52cffeda0d018f020f48e5460c051d5c2031c3a3c82133a21527f186a0c1650e" %}
+{% set version = "2.2" %}
+{% set sha256 = "fe065f2443e38444100b43999a96916e81a0aa7e500cf768d3bf6f8392b8efee" %}
 
 package:
   name: {{ name|lower }}
@@ -22,8 +22,8 @@ source:
     - patches/0010-Rework-dependencies-to-be-dynamic-i.e.-can-be-overri.patch
 
 build:
-  number: 3
-  skip: True  # [win and vc<14]
+  number: 0
+  skip: true  # [win and vc<14]
 
 requirements:
   build:
@@ -54,8 +54,8 @@ about:
   home: https://github.com/BlueBrain/HighFive
   license: BSL-1.0
   license_file: LICENSE
-  summary: 'Header-only C++ HDF5 interface'
-  description: 'HighFive is a modern C++/C++11 friendly interface for libhdf5.'
+  summary: Header-only C++ HDF5 interface
+  description: HighFive is a modern C++/C++11 friendly interface for libhdf5.
   dev_url: https://github.com/BlueBrain/HighFive
 
 extra:
