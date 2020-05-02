@@ -19,7 +19,7 @@ requirements:
     - {{ compiler('cxx') }}
     - cmake
     - make  # [unix]
-  host:
+  run:
     - hdf5
 
 test:
