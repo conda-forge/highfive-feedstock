@@ -13,6 +13,8 @@ source:
 build:
   number: 0
   skip: true  # [win and vc<14]
+  ignore_run_exports:
+    - hdf5
 
 requirements:
   build:
@@ -20,9 +22,9 @@ requirements:
     - cmake
     - make  # [unix]
   host:
-    - hdf5
+    - hdf5 *
   run:
-    - hdf5
+    - hdf5 *
 
 test:
   commands:
