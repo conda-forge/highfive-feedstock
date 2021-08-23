@@ -13,8 +13,6 @@ source:
 build:
   number: 0
   skip: true  # [win and vc<14]
-  ignore_run_exports_from:
-    - hdf5 *
 
 requirements:
   build:
