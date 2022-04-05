@@ -1,6 +1,6 @@
 {% set name = "HighFive" %}
-{% set version = "2.3.1" %}
-{% set sha256 = "41728a1204bdfcdcef8cbc3ddffe5d744c5331434ce3dcef35614b831234fcd7" %}
+{% set version = "2.4.0" %}
+{% set sha256 = "ba0ed6d8e2e09e80849926f38c15a26cf4b80772084cea0555269a25fec02149" %}
 
 package:
   name: {{ name|lower }}
