@@ -19,6 +19,7 @@ requirements:
     - {{ compiler('cxx') }}
     - cmake
     - make  # [unix]
+    - catch2
   host:
     - hdf5 *
   run:
