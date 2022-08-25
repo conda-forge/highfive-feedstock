@@ -20,9 +20,9 @@ requirements:
     - cmake
     - make  # [unix]
   host:
-    - hdf5 *
+    - hdf5
   run:
-    - hdf5 *
+    - hdf5
 
 test:
   commands:
