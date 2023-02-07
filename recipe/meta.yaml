@@ -1,6 +1,5 @@
 {% set name = "HighFive" %}
 {% set version = "2.6.2" %}
-{% set sha256 = "37184c430242170a50df0aa6fe982967341517aa02abd32b5dc12c12ecf3b6fb" %}
 
 package:
   name: {{ name|lower }}
@@ -8,11 +7,10 @@ package:
 
 source:
   url: https://github.com/BlueBrain/HighFive/archive/v{{ version }}.tar.gz
-  sha256: {{ sha256 }}
+  sha256: ab51b9fbb49e877dd1aa7b53b4b26875f41e4e0b8ee0fc2f1d735e0d1e43d708
 
 build:
   number: 1
-  skip: true  # [win and vc<14]
 
 requirements:
   build:
@@ -20,8 +18,6 @@ requirements:
     - cmake
     - make  # [unix]
   host:
-    - hdf5
-  run:
     - hdf5
 
 test:
