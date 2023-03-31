@@ -1,11 +1,11 @@
-About highfive
-==============
+About highfive-feedstock
+========================
+
+Feedstock license: [BSD-3-Clause](https://github.com/conda-forge/highfive-feedstock/blob/main/LICENSE.txt)
 
 Home: https://github.com/BlueBrain/HighFive
 
 Package license: BSL-1.0
-
-Feedstock license: [BSD-3-Clause](https://github.com/conda-forge/highfive-feedstock/blob/main/LICENSE.txt)
 
 Summary: Header-only C++ HDF5 interface
 
