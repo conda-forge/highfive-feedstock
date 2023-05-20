@@ -9,7 +9,7 @@ cmake ${CMAKE_ARGS} \
   -DHIGHFIVE_USE_BOOST=OFF \
   -DHIGHFIVE_USE_HALF_FLOAT=ON \
   -DHIGHFIVE_USE_INSTALL_DEPS=OFF \
-  -DHALF_INCLUDE_PATH=${PREFIX}/include \
+  -DHALF_INCLUDE_PATH=${PREFIX}/include/half_float \
   .
 
 make install
