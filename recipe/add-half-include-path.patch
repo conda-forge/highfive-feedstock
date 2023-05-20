@@ -1,0 +1,13 @@
+diff --git a/CMake/HighFiveTargetDeps.cmake b/CMake/HighFiveTargetDeps.cmake
+index 8fddf39e..b413c2b8 100644
+--- a/CMake/HighFiveTargetDeps.cmake
++++ b/CMake/HighFiveTargetDeps.cmake
+@@ -57,7 +57,7 @@ if(NOT TARGET libdeps)
+ 
+   # Half
+   if(HIGHFIVE_USE_HALF_FLOAT)
+-    find_file(FOUND_HALF half.hpp)
++    find_file(FOUND_HALF half.hpp PATHS ${HALF_INCLUDE_PATH})
+     if (NOT FOUND_HALF)
+       message(FATAL_ERROR "Half-precision floating-point support requested but file half.hpp not found")
+     endif()
