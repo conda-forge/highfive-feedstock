@@ -8,6 +8,8 @@ package:
 source:
   url: https://github.com/BlueBrain/HighFive/archive/v{{ version }}.tar.gz
   sha256: 25b4c51a94d1e670dc93b9b73f51e79b65d8ff49bcd6e5d5582d5ecd2789a249
+  patches:
+    - add-half-include-path.patch
 
 build:
   number: 1
