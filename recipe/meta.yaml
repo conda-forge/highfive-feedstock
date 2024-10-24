@@ -1,5 +1,5 @@
 {% set name = "HighFive" %}
-{% set version = "2.9.0" %}
+{% set version = "2.10.0" %}
 
 package:
   name: {{ name|lower }}
@@ -7,14 +7,15 @@ package:
 
 source:
   url: https://github.com/BlueBrain/HighFive/archive/v{{ version }}.tar.gz
-  sha256: 6301def8ceb9f4d7a595988612db288b448a3c0546f6c83417dab38c64994d7e
+  sha256: c29e8e1520e7298fabb26545f804e35bb3af257005c1c2df62e39986458d7c38
 
 build:
-  number: 1
+  number: 0
 
 requirements:
   build:
     - {{ compiler('cxx') }}
+    - {{ stdlib("c") }}
     - {{ stdlib("c") }}
     - cmake
     - make  # [unix]
