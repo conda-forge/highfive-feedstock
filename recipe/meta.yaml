@@ -30,13 +30,13 @@ test:
     - test -d $PREFIX/include/highfive/bits  # [unix]
     - test -f $PREFIX/include/highfive/bits/H5File_misc.hpp  # [unix]
     - test -f $PREFIX/include/highfive/H5Exception.hpp  # [unix]
-    - test -f $PREFIX/share/HighFive/CMake/HighFiveConfig.cmake  # [unix]
-    - test -f $PREFIX/share/HighFive/CMake/HighFiveTargets.cmake  # [unix]
+    - test -f $PREFIX/lib/HighFive/CMake/HighFiveConfig.cmake  # [unix]
+    - test -f $PREFIX/lib/HighFive/CMake/HighFiveTargets.cmake  # [unix]
     - if exist %LIBRARY_PREFIX%\include\highfive\H5Attribute.hpp (exit 0) else (exit 1)  # [win]
     - if exist %LIBRARY_PREFIX%\include\highfive\bits\H5File_misc.hpp (exit 0) else (exit 1)  # [win]
     - if exist %LIBRARY_PREFIX%\include\highfive\H5Exception.hpp (exit 0) else (exit 1)  # [win]
-    - if exist %LIBRARY_PREFIX%\share\HighFive\CMake\HighFiveConfig.cmake (exit 0) else (exit 1)  # [win]
-    - if exist %LIBRARY_PREFIX%\share\HighFive\CMake\HighFiveTargets.cmake (exit 0) else (exit 1)  # [win]
+    - if exist %LIBRARY_PREFIX%\lib\HighFive\CMake\HighFiveConfig.cmake (exit 0) else (exit 1)  # [win]
+    - if exist %LIBRARY_PREFIX%\lib\HighFive\CMake\HighFiveTargets.cmake (exit 0) else (exit 1)  # [win]
 
 about:
   home: https://github.com/highfive-devs/HighFive
