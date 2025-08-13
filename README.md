@@ -3,15 +3,15 @@ About highfive-feedstock
 
 Feedstock license: [BSD-3-Clause](https://github.com/conda-forge/highfive-feedstock/blob/main/LICENSE.txt)
 
-Home: https://github.com/BlueBrain/HighFive
+Home: https://github.com/highfive-devs/HighFive
 
 Package license: BSL-1.0
 
 Summary: Header-only C++ HDF5 interface
 
-Development: https://github.com/BlueBrain/HighFive
+Development: https://github.com/highfive-devs/HighFive
 
-HighFive is a modern C++/C++11 friendly interface for libhdf5.
+HighFive is a modern C++/C++14 friendly interface for libhdf5.
 
 Current build status
 ====================
