@@ -13,3 +13,6 @@ cmake ${CMAKE_ARGS} \
   .
 
 make install
+
+mkdir -p ${PREFIX}/R/Library/HighFive/
+cp ${RECIPE_DIR}/DESCRIPTION ${PREFIX}/R/Library/HighFive/
