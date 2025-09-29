@@ -11,6 +11,8 @@ source:
 
 build:
   number: 2
+  ignore_run_exports:
+    - r-base
 
 requirements:
   build:
