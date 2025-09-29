@@ -17,8 +17,5 @@ if errorlevel 1 exit 1
 nmake install
 if errorlevel 1 exit 1
 
-mkdir %PREFIX%\R\Library\HighFive
-if errorlevel 1 exit 1
-
-copy %RECIPE_DIR%\DESCRIPTION %PREFIX%\R\Library\HighFive\
+%R% CMD INSTALL %RECIPE_DIR%
 if errorlevel 1 exit 1
