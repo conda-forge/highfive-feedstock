@@ -21,6 +21,7 @@ requirements:
     - make  # [unix]
   host:
     - hdf5
+    - zlib
 
 test:
   commands:
